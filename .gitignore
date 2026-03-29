@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Spam Filter Configuration
+# Exclude actual config (contains sensitive paths), keep example
+config.json
+~/.keepassxc_password
+spam_filter.log
+.spam_filter.pid

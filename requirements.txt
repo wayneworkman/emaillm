@@ -1,0 +1,18 @@
+# AI Spam Filter Dependencies
+
+# HTTP requests for vLLM API
+requests
+
+# SPF checking
+pyspf
+
+# DNS resolution (required by pyspf)
+dnspython
+
+# Domain name parsing and wildcard matching
+tldextract
+
+# Testing (dev dependencies)
+pytest
+pytest-cov
+pytest-mock

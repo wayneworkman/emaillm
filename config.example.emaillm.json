@@ -1,0 +1,122 @@
+{
+    "keepassxc": {
+        "database_path": "/home/user/.local/share/KeePassXC/mydatabase.kdbx",
+        "password_file": "~/.keepassxc_password"
+    },
+    "vllm": {
+        "base_url": "http://localhost:8000/v1",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "enable_thinking": false,
+        "api_key": null
+    },
+    "spam": {
+        "processing_timeout_seconds": 30,
+        "max_emails_per_run": 30
+    },
+    "mailers": {
+        "domains": [
+            "gmail.com",
+            "google.com",
+            "googlemail.com",
+            "outlook.com",
+            "hotmail.com",
+            "live.com",
+            "msn.com",
+            "yahoo.com",
+            "yahoo.co.uk",
+            "yahoo.fr",
+            "yahoo.de",
+            "aol.com",
+            "icloud.com",
+            "me.com",
+            "mac.com",
+            "mailgun.org",
+            "sendgrid.net",
+            "amazonses.com",
+            "ses.amazonaws.com",
+            "mailchimp.com",
+            "mandrillapp.com",
+            "postmarkapp.com",
+            "sparkpost.com",
+            "sendinblue.com",
+            "mailjet.com",
+            "zendesk.com",
+            "intercom.io",
+            "salesforce.com",
+            "stripe.com",
+            "paypal.com",
+            "squareup.com"
+        ]
+    },
+    "folders": {
+        "spam": {
+            "folder_name": "Spam",
+            "description": "Unsolicited bulk emails, scams, fake offers, suspicious content"
+        },
+        "phishing": {
+            "folder_name": "Phishing_Attempts",
+            "description": "Attempts to steal credentials, fake login pages, urgent security alerts, requests for sensitive info"
+        },
+        "important": {
+            "folder_name": "Important",
+            "description": "Time-sensitive, critical business communications, priority messages from known contacts"
+        },
+        "promotion": {
+            "folder_name": "Promotions",
+            "description": "Marketing emails, newsletters, sales offers, product updates (legitimate)"
+        },
+        "transaction": {
+            "folder_name": "Transactions",
+            "description": "Orders, invoices, receipts, billing statements, purchase confirmations, shipping notifications, delivery updates, tracking information, payment confirmations"
+        },
+        "regular": {
+            "folder_name": "Regular",
+            "description": "Normal correspondence, non-urgent communications, general information"
+        },
+        "prompt_attack": {
+            "folder_name": "Prompt_Attacks",
+            "file": "prompts/prompt_injection.txt"
+        }
+    },
+    "global_allowlist": {
+        "email_addresses": [
+            "trusted@example.com",
+            "newsletter@legitimate-service.com"
+        ],
+        "domains": [
+            "mycompany.com",
+            "trusted-partner.org"
+        ]
+    },
+    "inboxes": [
+        {
+            "name": "primary_email",
+            "keepassxc_entry_name": "Email - Primary Account",
+            "imap": {
+                "port": 993
+            },
+            "allowlist": {
+                "email_addresses": [
+                    "boss@mycompany.com"
+                ],
+                "domains": []
+            }
+        },
+        {
+            "name": "secondary_email",
+            "keepassxc_entry_name": "Email - Secondary Account",
+            "imap": {
+                "port": 993
+            },
+            "allowlist": {
+                "email_addresses": [],
+                "domains": []
+            }
+        }
+    ],
+    "runtime": {
+        "pid_file": "~/.local/state/emaillm.pid",
+        "log_file": "~/.local/share/emaillm/emaillm.log"
+    }
+}
