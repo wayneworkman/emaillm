@@ -453,13 +453,16 @@ def load_config(config_path: str) -> SpamFilterConfig:
     folder_configs = {}
     
     # Required folder categories
-    required_folders = ['spam', 'phishing', 'important', 'promotion', 
+    required_folders = ['spam', 'phishing', 'important', 'promotion',
                        'transaction', 'regular']
     
     for category in required_folders:
         if category not in folders_config:
             raise ValueError(f"Missing required folder config: {category}")
-        
+    
+    # Process ALL folders in config (required + optional custom categories)
+    # prompt_attack is special - it's used for security scanning, not classification
+    for category in folders_config:
         folder_data = folders_config[category]
         
         # Validate structure
@@ -503,53 +506,11 @@ def load_config(config_path: str) -> SpamFilterConfig:
             folder_name=validated_folder_name,
             description=description_text
         )
+        logger.info(f"Loaded folder config: {category} -> {validated_folder_name}")
     
     # Handle optional prompt_attack folder
-    has_prompt_attack = 'prompt_attack' in folders_config
+    has_prompt_attack = 'prompt_attack' in folder_configs
     if has_prompt_attack:
-        folder_data = folders_config['prompt_attack']
-        
-        # Validate structure
-        if not isinstance(folder_data, dict):
-            raise ValueError("Folder 'prompt_attack' must be a dictionary with 'folder_name' and either 'description' or 'file'")
-        
-        if 'folder_name' not in folder_data:
-            raise ValueError("Folder 'prompt_attack' missing 'folder_name' field")
-        
-        # Check for description or file (exactly one required)
-        has_description = 'description' in folder_data
-        has_file = 'file' in folder_data
-        
-        if has_description and has_file:
-            raise ValueError("Folder 'prompt_attack' cannot have both 'description' and 'file' - choose one")
-        
-        if not has_description and not has_file:
-            raise ValueError("Folder 'prompt_attack' must have either 'description' or 'file' field")
-        
-        # Validate folder name to prevent IMAP injection
-        try:
-            validated_folder_name = validate_folder_name(folder_data['folder_name'])
-        except ValueError as e:
-            raise ValueError(f"Folder 'prompt_attack': {e}")
-        
-        # Load description text
-        if has_description:
-            description_text = folder_data['description']
-        else:
-            # Load from file
-            file_path = folder_data['file']
-            try:
-                with open(file_path, 'r') as f:
-                    description_text = f.read().strip()
-            except FileNotFoundError:
-                raise ValueError(f"Folder 'prompt_attack' file not found: {file_path}")
-            except IOError as e:
-                raise ValueError(f"Folder 'prompt_attack' cannot read file '{file_path}': {e}")
-        
-        folder_configs['prompt_attack'] = FolderConfig(
-            folder_name=validated_folder_name,
-            description=description_text
-        )
         logger.info("Prompt attack detection is ENABLED")
     else:
         logger.warning("Prompt attack detection is DISABLED (no 'prompt_attack' folder in config)")
@@ -839,9 +800,9 @@ def classify_email_vllm(base_url: str, model: str, email: EmailMessage,
     Returns (classification, reasoning).
     """
     # Build categories section dynamically from config
-    # Exclude prompt_injection from classification categories
-    classification_categories = {k: v for k, v in folder_configs.items() 
-                                 if k != 'prompt_injection'}
+    # Exclude prompt_attack from classification categories (it's for security scanning only)
+    classification_categories = {k: v for k, v in folder_configs.items()
+                                 if k != 'prompt_attack'}
     
     categories_section = "Categories:\n"
     for category, config in classification_categories.items():
@@ -1633,19 +1594,13 @@ def process_inbox(inbox_config: InboxConfig, filter_config: SpamFilterConfig,
                 if target_folder:
                     logger.debug(f"Classified as {classification.code}: From={email.from_address} -> {target_folder}")
                     if move_to_folder(imap, mail_id_str, target_folder):
-                        # Update stats based on category
-                        if classification.category == 'spam':
-                            stats['spam'] += 1
-                        elif classification.category == 'phishing':
-                            stats['phishing'] += 1
-                        elif classification.category == 'important':
-                            stats['important'] += 1
-                        elif classification.category == 'promotion':
-                            stats['promotion'] += 1
-                        elif classification.category == 'transaction':
-                            stats['transaction'] += 1
-                        elif classification.category == 'regular':
-                            stats['regular'] += 1
+                        # Update stats based on category (dynamic - supports custom categories)
+                        category = classification.category
+                        if category in stats:
+                            stats[category] += 1
+                        else:
+                            # Custom category not in initial stats dict
+                            stats[category] = stats.get(category, 0) + 1
                     else:
                         stats['errors'] += 1
                 else:
@@ -1748,7 +1703,7 @@ def main():
             inbox_stats = process_inbox(inbox_config, config, model)
             
             for key, value in inbox_stats.items():
-                total_stats[key] += value
+                total_stats[key] = total_stats.get(key, 0) + value
             
             logger.info(f"Inbox {inbox_config.name} stats: {inbox_stats}")
         
@@ -1760,12 +1715,15 @@ def main():
         logger.info(f"Spoofed (auto-spam): {total_stats['spoofed']}")
         logger.info(f"Allowlisted: {total_stats['allowlisted']}")
         logger.info(f"Prompt injection attempts: {total_stats['prompt_injection']}")
-        logger.info(f"Classified as spam: {total_stats['spam']}")
-        logger.info(f"Classified as phishing: {total_stats['phishing']}")
-        logger.info(f"Classified as important: {total_stats['important']}")
-        logger.info(f"Classified as promotion: {total_stats['promotion']}")
-        logger.info(f"Classified as transaction: {total_stats['transaction']}")
-        logger.info(f"Classified as regular: {total_stats['regular']}")
+        for category in ['spam', 'phishing', 'important', 'promotion', 'transaction', 'regular']:
+            logger.info(f"Classified as {category}: {total_stats.get(category, 0)}")
+        # Include any custom categories that weren't in the initial stats
+        standard_cats = {'processed', 'spam', 'phishing', 'important', 'promotion',
+                         'transaction', 'regular', 'spoofed', 'allowlisted',
+                         'prompt_injection', 'errors'}
+        custom_cats = {k: v for k, v in total_stats.items() if k not in standard_cats and v > 0}
+        for category, count in sorted(custom_cats.items()):
+            logger.info(f"Classified as {category}: {count}")
         logger.info(f"Errors: {total_stats['errors']}")
         logger.info("=" * 50)
     
