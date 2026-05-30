@@ -189,7 +189,7 @@ Copy `config.example.emaillm.json` to `~/.emaillm.json` and customize:
 **vLLM Settings:**
 - `base_url`: vLLM API endpoint (default: `http://localhost:8000/v1`)
 - `temperature`: AI randomness (0.0-1.0, default: 0.1 - lower for more deterministic results)
-- `max_tokens`: Maximum tokens for email content (default: 500, increase for longer emails)
+- `max_tokens`: Maximum tokens for email content (default: 4096, increase for longer emails)
 - `enable_thinking`: Enable model thinking mode (default: false - disabled for faster responses)
 - `api_key`: Optional Bearer token for vLLM authentication (default: null)
 
@@ -412,7 +412,7 @@ EmailLM uses dual logging:
 ### vLLM errors
 - Verify vLLM is running: `curl http://localhost:8000/v1/models`
 - Check model is loaded and responsive
-- Adjust `max_tokens` if emails are too long (default: 500)
+- Adjust `max_tokens` if emails are too long (default: 4096)
 - Adjust `temperature` for classification consistency (default: 0.1 - lower for more deterministic results)
 - Set `api_key` if your vLLM endpoint requires authentication
 - vLLM requests have 600 second timeout for large emails
