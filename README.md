@@ -351,10 +351,11 @@ This helps you understand why emails are classified or flagged without storing s
 The script uses **lenient defaults** to avoid false positives:
 
 ### DKIM Validation:
-- Checks `Authentication-Results` header first (most reliable)
-- If DKIM=pass: ✅ Valid
-- If DKIM=fail: ❌ Invalid (spoofed unless allowlisted)
-- If DKIM=none or unverifiable: ⚠️ Warns but passes (trusting server)
+- **Cryptographic verification** via [`dkimpy`](https://pypi.org/project/dkimpy/): the signature is checked against the signing domain's public key (fetched over DNS), rather than trusting the `Authentication-Results` header (which an attacker can forge on externally-originated mail).
+- If the signature verifies **and** the signing domain (`d=`) aligns with the From domain: ✅ Valid
+- If there is no `DKIM-Signature` header: ❌ Invalid (spoofed unless allowlisted)
+- If the signature fails to verify (tampered, bad key, DNS failure): ❌ Invalid (spoofed unless allowlisted)
+- If the signature is valid but `d=` does not align with the From domain: ❌ Invalid — a valid signature from an unrelated domain does not authenticate the sender (spoofed unless allowlisted)
 
 ### SPF Validation:
 - Checks `Authentication-Results` and `Received-SPF` headers

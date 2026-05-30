@@ -6,7 +6,10 @@ requests
 # SPF checking
 pyspf
 
-# DNS resolution (required by pyspf)
+# DKIM cryptographic signature verification
+dkimpy
+
+# DNS resolution (required by pyspf and dkimpy)
 dnspython
 
 # Domain name parsing and wildcard matching

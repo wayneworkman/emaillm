@@ -25,6 +25,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Optional
 
+import dkim
 import requests
 import spf
 import tldextract
@@ -542,9 +543,59 @@ def load_config(config_path: str) -> SpamFilterConfig:
     )
 
 
+def parse_keepassxc_show_output(output: str) -> tuple[str, str, str]:
+    """Parse username, password, and host from `keepassxc-cli show --all` output.
+
+    Handles both the plain-text "Key: value" format (what keepassxc-cli emits)
+    and a JSON object, for forward/backward compatibility across versions.
+    Returns (username, password, host); any field not found is an empty string.
+    """
+    username = ''
+    password_field = ''
+    host = ''
+
+    stripped = output.strip()
+    if stripped.startswith('{'):
+        # JSON format
+        try:
+            data = json.loads(stripped)
+            username = data.get('username', '') or data.get('UserName', '')
+            password_field = data.get('password', '') or data.get('Password', '')
+            attributes = data.get('attributes', {})
+            if isinstance(attributes, str):
+                attributes = json.loads(attributes)
+            if isinstance(attributes, dict):
+                host = attributes.get('host', '')
+            elif isinstance(attributes, list):
+                for attr in attributes:
+                    if attr.get('key') == 'host':
+                        host = attr.get('value', '')
+                        break
+            return username, password_field, host
+        except (json.JSONDecodeError, AttributeError):
+            logger.debug("Could not parse KeePassXC output as JSON; falling back to plain text")
+
+    # Plain-text "Key: value" format. Default fields are UserName/Password;
+    # 'host' is a custom attribute (case-sensitive, per setup instructions).
+    for line in output.splitlines():
+        if ':' not in line:
+            continue
+        key, _, value = line.partition(':')
+        key = key.strip()
+        value = value.strip()
+        if key.lower() == 'username' and not username:
+            username = value
+        elif key.lower() == 'password' and not password_field:
+            password_field = value
+        elif key == 'host' and not host:
+            host = value
+
+    return username, password_field, host
+
+
 def get_keepassxc_credential(database: str, entry_name: str, password_file: str) -> dict:
     """Retrieve credentials from KeePassXC using keepassxc-cli.
-    
+
     Security note: Passwords are kept in memory only as long as necessary
     and are not logged. Consider using memory-zeroing techniques in production.
     """
@@ -557,112 +608,46 @@ def get_keepassxc_credential(database: str, entry_name: str, password_file: str)
         raise FileNotFoundError(f"KeePassXC password file not found: {password_file}")
     except PermissionError:
         raise PermissionError(f"Cannot read KeePassXC password file: {password_file}")
-    
+
     if not kpx_password:
         raise ValueError(f"KeePassXC password file is empty: {password_file}")
-    
-    # Get username using keepassxc-cli
-    # New syntax: keepassxc-cli show [options] database entry
-    # Password passed via stdin without special flag
-    username_cmd = [
-        'keepassxc-cli', 'show', '--attributes', 'username',
+
+    # A single `show --all --show-protected` call returns every attribute
+    # (username, password, and the custom 'host' field), so we only need to
+    # unlock and query the database once per inbox.
+    show_cmd = [
+        'keepassxc-cli', 'show', '--all', '--show-protected',
         database,
         entry_name
     ]
-    
+
     try:
         result = subprocess.run(
-            username_cmd,
+            show_cmd,
             input=kpx_password.encode(),
             capture_output=True,
             timeout=30
         )
-        
+
         if result.returncode != 0:
             logger.error(f"KeePassXC error: {result.stderr.decode()}")
             raise Exception(f"Failed to retrieve credentials from KeePassXC: {result.stderr.decode()}")
-        
-        username = result.stdout.decode().strip()
-        
-        # Get password attribute
-        password_cmd = [
-            'keepassxc-cli', 'show', '--attributes', 'password',
-            database,
-            entry_name
-        ]
-        
-        result = subprocess.run(
-            password_cmd,
-            input=kpx_password.encode(),
-            capture_output=True,
-            timeout=30
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"KeePassXC error: {result.stderr.decode()}")
-            raise Exception(f"Failed to retrieve password from KeePassXC: {result.stderr.decode()}")
-        
-        password_field = result.stdout.decode().strip()
-        
-        # Get custom attributes (host) - use --all to get all attributes as plain text
-        custom_attrs_cmd = [
-            'keepassxc-cli', 'show', '--all',
-            database,
-            entry_name
-        ]
-        
-        result = subprocess.run(
-            custom_attrs_cmd,
-            input=kpx_password.encode(),
-            capture_output=True,
-            timeout=30
-        )
-        
-        host = ''
-        if result.returncode == 0:
-            custom_data = result.stdout.decode()
-            
-            # Check if it's JSON format or plain text format
-            if custom_data.strip().startswith('{'):
-                # JSON format
-                try:
-                    custom_json = json.loads(custom_data)
-                    custom_attributes = custom_json.get('attributes', [])
-                    if isinstance(custom_attributes, str):
-                        custom_attributes = json.loads(custom_attributes)
-                    
-                    # Find host in custom attributes
-                    if isinstance(custom_attributes, dict):
-                        host = custom_attributes.get('host', '')
-                    elif isinstance(custom_attributes, list):
-                        for attr in custom_attributes:
-                            if attr.get('key') == 'host':
-                                host = attr.get('value', '')
-                                break
-                except json.JSONDecodeError:
-                    logger.debug(f"Could not parse custom attributes as JSON: {custom_data}")
-            else:
-                # Plain text format - look for "host:" line
-                for line in custom_data.split('\n'):
-                    line = line.strip()
-                    if line.startswith('host:'):
-                        host = line[5:].strip()
-                        logger.debug(f"Found host in plain text: {host}")
-                        break
-        
+
+        username, password_field, host = parse_keepassxc_show_output(result.stdout.decode())
+
         if not username or not password_field or not host:
             logger.error(f"Missing required fields in KeePassXC entry: username={bool(username)}, password={bool(password_field)}, host={bool(host)}")
             raise Exception("Missing required fields in KeePassXC entry (username, password, host)")
-        
+
         # Zero out KeePassXC password from memory (best effort)
         kpx_password = ''
-        
+
         return {
             'username': username,
             'password': password_field,
             'host': host
         }
-    
+
     except subprocess.TimeoutExpired:
         raise Exception("Timeout retrieving credentials from KeePassXC")
     finally:
@@ -902,37 +887,60 @@ Provide your reasoning first, then your classification:
         return EmailClassification.ERROR, str(e)
 
 
-def validate_dkim(email: EmailMessage) -> tuple[bool, str]:
-    """Validate DKIM signature of the email."""
+def validate_dkim(email: EmailMessage, dnsfunc=None) -> tuple[bool, str]:
+    """Cryptographically verify the email's DKIM signature.
+
+    Unlike trusting the ``Authentication-Results`` header (which a sender can
+    forge on externally-originated mail), this verifies the signature itself:
+    ``dkim.verify`` fetches the signing domain's public key via DNS and checks
+    the RSA signature over the raw message bytes.
+
+    A valid signature only proves that *some* domain signed the message, so we
+    additionally require the signing domain (``d=``) to align with the From
+    domain. This prevents an attacker from signing with a domain they control
+    (e.g. ``evil.com``) while spoofing ``From: bank.com``.
+
+    Returns (is_valid, reason).
+    """
     dkim_signature = email.headers.get('dkim_signature', '')
-    authentication_results = email.headers.get('authentication_results', '')
-    
-    # Check Authentication-Results header first (most reliable)
-    if 'dkim=pass' in authentication_results.lower():
-        return True, "DKIM passed (Authentication-Results)"
-    if 'dkim=fail' in authentication_results.lower():
-        return False, "DKIM failed (Authentication-Results)"
-    if 'dkim=none' in authentication_results.lower():
-        return False, "No DKIM signature found (Authentication-Results)"
-    
-    # If no DKIM signature header, fail
+
+    # No signature at all - nothing to verify.
     if not dkim_signature:
         return False, "No DKIM-Signature header found"
-    
-    # Try to verify DKIM manually using dkimpy
+
+    # Cryptographically verify the signature (performs a DNS public-key lookup).
+    # dnsfunc lets tests supply the public key without network access.
     try:
-        # This is a simplified check - full DKIM verification requires DNS access
-        # and the public key from the domain's TXT records
-        if 'b=' in dkim_signature and 's=' in dkim_signature and 'd=' in dkim_signature:
-            # Signature appears to have required fields
-            # Full verification would require DNS lookup which is complex
-            # For now, we rely on Authentication-Results from the receiving server
-            logger.info("DKIM signature present but full verification requires DNS access")
-            return True, "DKIM signature present (full verification via DNS not available)"
+        if dnsfunc is not None:
+            verified = dkim.verify(email.raw_data, dnsfunc=dnsfunc)
+        else:
+            verified = dkim.verify(email.raw_data)
+    except dkim.DKIMException as e:
+        return False, f"DKIM verification failed: {e}"
     except Exception as e:
+        # DNS resolution failures, malformed keys, etc. Fail closed.
         logger.warning(f"DKIM verification error: {e}")
-    
-    return False, "Could not verify DKIM signature"
+        return False, f"DKIM could not be verified: {e}"
+
+    if not verified:
+        return False, "DKIM signature verification failed (invalid signature)"
+
+    # Signature is valid - check that the signing domain aligns with From.
+    d_match = re.search(r'(?:^|;)\s*d\s*=\s*([^;\s]+)', dkim_signature)
+    signing_domain = d_match.group(1).strip() if d_match else ''
+    signing_registered = ''
+    if signing_domain:
+        signing_registered = tldextract.extract(signing_domain).top_domain_under_public_suffix
+
+    if (signing_registered and email.from_domain
+            and signing_registered.lower() == email.from_domain.lower()):
+        return True, f"DKIM cryptographically verified and aligned with From (d={signing_domain})"
+
+    # Valid signature but the signing domain does not match the From domain.
+    # Treat as spoofed: a verified signature from an unrelated domain does not
+    # authenticate this sender.
+    return False, (f"DKIM signature valid but signing domain '{signing_domain}' "
+                   f"is not aligned with From domain '{email.from_domain}'")
 
 
 def validate_spf(email: EmailMessage) -> tuple[bool, str]:

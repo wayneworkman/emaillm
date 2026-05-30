@@ -19,58 +19,119 @@ def create_email(raw_email: bytes) -> EmailMessage:
     return email
 
 
-class TestValidateDKIM:
-    """Test DKIM validation function."""
-    
-    def test_dkim_pass_in_auth_results(self):
-        """Test DKIM pass detection."""
-        raw_email = b"""\
+# --- DKIM test fixtures ----------------------------------------------------
+# These messages were signed offline with throwaway 1024-bit RSA keys. The
+# matching public keys are served by FAKE_DKIM_DNS below so verification runs
+# fully offline (no network / real DNS). DKIM canonicalization is line-ending
+# sensitive, so messages are stored with LF and normalized to CRLF by _crlf().
+
+FAKE_DKIM_DNS = {
+    "sel._domainkey.example.com.":
+        "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDVhZvO2Loa8bdphmp+Y/D59GRb"
+        "mZqWk2Vob9t/odKIGIIL/wdoQndJS2Nd/SVuX56LvqcFT7ppgz/PwobHSHQU4NXF02UQI5PSuuK91Phd3a"
+        "7XGprdxv2m7BsuAaq9P1ZZPpjKBKviMndfLjIOrUEb5PBgyuPAhkakixX83j555wIDAQAB",
+    "sel2._domainkey.evil.com.":
+        "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQClxfNjrQCKzmM+7JaLo2iGID3g"
+        "3FkA/2n2WDjtMN0A5I7NOxheORtyNqiAQy3DKQcaaa0aFApRKSqXk625j765dWNrTrHt/9/u91A2NiNbcDR"
+        "w8ZAjOhVlrLU0eGGqlfEl5FujNMUVG7psZ18Vu3r5Zax2e3WnKNY1wNSPpCvFowIDAQAB",
+}
+
+
+def fake_dkim_dns(name, timeout=5):
+    """Stand-in for the DKIM public-key DNS lookup used by dkimpy."""
+    if isinstance(name, bytes):
+        name = name.decode()
+    return FAKE_DKIM_DNS.get(name, "").encode()
+
+
+def _crlf(text: str) -> bytes:
+    return text.replace('\r\n', '\n').replace('\n', '\r\n').encode()
+
+
+# Valid signature, signing domain (d=example.com) aligns with From.
+DKIM_ALIGNED = _crlf("""DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=example.com;
+ i=@example.com; q=dns/txt; s=sel; t=1780170309; h=from : to : subject;
+ bh=TJnoB+ZgA8hH5kDk0sHkyILr0qoHt1QABzXsd9yItT4=;
+ b=Db9CgVVYy3gf0LswT3d63Ydsn+s1EfZ2DN1a/Ld7CJjFKavLwHFfDtmmC7rsdakATzb9F
+ BrP3Ar8x8w5J6sVq41T7WTLa8BwzGq1XUb7GqLkWYaWG5SEFES1wswgVeEnQ/SV3cGAmUAd
+ bnEJeVdkpZz59FpTJlAm0mVSApaCP90=
 From: sender@example.com
+To: me@example.com
+Subject: Test
+
+Hello world.
+""")
+
+# Valid signature, but signing domain (d=evil.com) does NOT match From
+# (sender@example.com) - the spoofing case header-trust validation missed.
+DKIM_MISALIGNED = _crlf("""DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=evil.com;
+ i=@evil.com; q=dns/txt; s=sel2; t=1780170309; h=from : to : subject;
+ bh=TJnoB+ZgA8hH5kDk0sHkyILr0qoHt1QABzXsd9yItT4=;
+ b=lcuJY6EIJ7HdaXLUdvbwzN8yTrQogNyWSnlzM5wyQq7XBHkMuzpxJz/wFYPyI6q5ZBT7o
+ hITqUM8qQEiov13669OvMzDGw3vRauP8vXHUAO7aQAgO95qESpvGMlbrdGBEtTEivaeJ/3d
+ 7djFNF7qvvJN7W1Y1fzvGlhFh1ATPFg=
+From: sender@example.com
+To: me@example.com
+Subject: Test
+
+Hello world.
+""")
+
+
+class TestValidateDKIM:
+    """Test cryptographic DKIM validation."""
+
+    def test_valid_aligned_signature_passes(self):
+        """A cryptographically valid signature aligned with From passes."""
+        email = create_email(DKIM_ALIGNED)
+        valid, reason = validate_dkim(email, dnsfunc=fake_dkim_dns)
+
+        assert valid is True
+        assert "verified" in reason.lower()
+
+    def test_tampered_body_fails(self):
+        """Modifying a signed message breaks verification."""
+        email = create_email(DKIM_ALIGNED.replace(b"Hello world.", b"Goodbye, send money."))
+        valid, reason = validate_dkim(email, dnsfunc=fake_dkim_dns)
+
+        assert valid is False
+        assert "dkim" in reason.lower()
+
+    def test_valid_signature_misaligned_domain_fails(self):
+        """A valid signature from an unrelated domain does not authenticate From."""
+        email = create_email(DKIM_MISALIGNED)
+        valid, reason = validate_dkim(email, dnsfunc=fake_dkim_dns)
+
+        # Signature verifies, but d=evil.com is not aligned with From example.com.
+        assert valid is False
+        assert "align" in reason.lower()
+
+    def test_forged_auth_results_header_is_not_trusted(self):
+        """A faked 'Authentication-Results: dkim=pass' with no signature must fail.
+
+        This is the spoofing vector cryptographic verification closes: an
+        attacker can write any header they like, but cannot forge a signature.
+        """
+        raw_email = b"""\
+From: attacker@example.com
 Authentication-Results: mail.example.com; dkim=pass header.i=@example.com
 
 Test."""
         email = create_email(raw_email)
-        valid, reason = validate_dkim(email)
-        
-        assert valid is True
-        assert "dkim" in reason.lower()
-    
-    def test_dkim_fail_in_auth_results(self):
-        """Test DKIM fail detection."""
-        raw_email = b"""\
-From: sender@example.com
-Authentication-Results: mail.example.com; dkim=fail header.i=@example.com
+        valid, reason = validate_dkim(email, dnsfunc=fake_dkim_dns)
 
-Test."""
-        email = create_email(raw_email)
-        valid, reason = validate_dkim(email)
-        
         assert valid is False
-        assert "dkim" in reason.lower()
-    
-    def test_dkim_none_in_auth_results(self):
-        """Test DKIM none is treated as failure."""
-        raw_email = b"""\
-From: sender@example.com
-Authentication-Results: mail.example.com; dkim=none
+        assert "no dkim-signature" in reason.lower()
 
-Test."""
-        email = create_email(raw_email)
-        valid, reason = validate_dkim(email)
-        
-        # DKIM=none is treated as failure
-        assert valid is False
-        assert "dkim" in reason.lower()
-    
-    def test_no_authentication_results_no_dkim_header(self):
-        """Test email without any DKIM info fails."""
+    def test_no_dkim_header(self):
+        """Test email without any DKIM signature fails."""
         raw_email = b"""\
 From: sender@example.com
 
 Test."""
         email = create_email(raw_email)
-        valid, reason = validate_dkim(email)
-        
+        valid, reason = validate_dkim(email, dnsfunc=fake_dkim_dns)
+
         # No DKIM signature means failure
         assert valid is False
 
