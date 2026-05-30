@@ -316,6 +316,7 @@ class EmailMessage:
             'dkim_signature': self.parsed.get('DKIM-Signature', ''),
             'return_path': self.parsed.get('Return-Path', ''),
             'sender': self.parsed.get('Sender', ''),
+            'arc_authentication_results': self.parsed.get_all('ARC-Authentication-Results', []),
         }
         
         # Decode subject if encoded
@@ -943,6 +944,48 @@ def validate_dkim(email: EmailMessage, dnsfunc=None) -> tuple[bool, str]:
                    f"is not aligned with From domain '{email.from_domain}'")
 
 
+def is_srs_address(address: str) -> bool:
+    """Detect if a Return-Path address has been rewritten by Sender Rewriting Scheme (SRS).
+    
+    SRS addresses have the format: SRS0=<hash>=<flags>=<domain>=<localpart>@<relay>
+    Example: SRS0=07c6=DT=veedma.com=hiring@mysecuremail.co
+    """
+    if not address:
+        return False
+    # Strip angle brackets if present
+    stripped = address.strip().strip('<>')
+    return bool(re.match(r'SRS\d+=', stripped))
+
+
+def check_arc_spf(arc_headers: list) -> tuple[bool, str]:
+    """Check ARC-Authentication-Results headers for SPF pass.
+    
+    ARC (Authenticated Received Chain) preserves authentication results
+    through email relays. When a relay rewrites the envelope sender
+    (e.g., SRS forwarding), the original SPF results are captured in
+    ARC-Authentication-Results headers.
+    
+    Args:
+        arc_headers: List of ARC-Authentication-Results header values
+        
+    Returns:
+        (is_valid, reason) tuple
+    """
+    if not arc_headers:
+        return False, "No ARC-Authentication-Results headers found"
+    
+    for i, header in enumerate(arc_headers):
+        header_lower = header.lower()
+        # Check for "Received-SPF: pass" pattern (common in ARC headers)
+        if 'received-spf: pass' in header_lower or 'received-spf:pass' in header_lower:
+            return True, f"SPF passed via ARC (header {i+1})"
+        # Also check for "spf=pass" pattern
+        if re.search(r'spf=pass', header_lower):
+            return True, f"SPF passed via ARC (header {i+1})"
+    
+    return False, "No SPF pass found in ARC headers"
+
+
 def validate_spf(email: EmailMessage) -> tuple[bool, str]:
     """Validate SPF record for the email."""
     authentication_results = email.headers.get('authentication_results', '')
@@ -978,6 +1021,26 @@ def validate_spf(email: EmailMessage) -> tuple[bool, str]:
     if 'spf=' in authentication_results.lower():
         # Server checked but result was inconclusive - trust server's judgment
         return True, "SPF checked by server (result inconclusive but not failed)"
+    
+    # Check for ARC-SPF pass when email has been through a relay
+    # that rewrites the envelope sender (e.g., SRS forwarding).
+    # ARC-SPF is the authoritative source for SPF results in relayed emails.
+    arc_headers = email.headers.get('arc_authentication_results', [])
+    if arc_headers:
+        arc_spf_valid, arc_spf_reason = check_arc_spf(arc_headers)
+        if arc_spf_valid:
+            logger.info(f"ARC-SPF fallback: {arc_spf_reason}")
+            return True, f"SPF passed via ARC-SPF: {arc_spf_reason}"
+    
+    # If SRS is detected in Return-Path, skip manual pyspf check.
+    # The manual check would test the SRS address against localhost or relay IP,
+    # which is meaningless. Be lenient - DKIM provides domain authenticity.
+    return_path_for_srs = email.headers.get('return_path', '')
+    _, envelope_sender = parseaddr(return_path_for_srs)
+    envelope_sender = envelope_sender.strip()
+    if is_srs_address(envelope_sender):
+        logger.info(f"SRS-rewritten Return-Path detected: {envelope_sender}")
+        return True, "SPF unverifiable due to SRS rewrite (trusting DKIM)"
     
     # Try manual SPF check using pyspf library (only if server didn't check)
     # This is a fallback and should be lenient

@@ -3,7 +3,10 @@
 import pytest
 from email import policy
 from email import message_from_bytes
-from emaillm import EmailMessage, validate_dkim, validate_spf, validate_headers_match_from
+from emaillm import (
+    EmailMessage, validate_dkim, validate_spf, validate_headers_match_from,
+    is_srs_address, check_arc_spf
+)
 
 
 def create_email(raw_email: bytes) -> EmailMessage:
@@ -227,6 +230,214 @@ Test."""
         
         # No SPF info means we can't check, so pass
         assert valid is True
+    
+    def test_arc_spf_pass_received_spf_format(self):
+        """Test ARC-SPF pass via Received-SPF: pass format."""
+        raw_email = b"""\
+From: hiring@veedma.com
+Return-Path: <SRS0=07c6=DT=veedma.com=hiring@mysecuremail.co>
+Authentication-Results: mail.example.com; dkim=pass
+ARC-Authentication-Results: i=2; Received-SPF: pass (mail.mysecuremail.co: domain of hiring@veedma.com designates 209.85.218.49 as permitted sender)
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        assert valid is True
+        assert "arc" in reason.lower()
+    
+    def test_arc_spf_pass_spf_eq_format(self):
+        """Test ARC-SPF pass via spf=pass format."""
+        raw_email = b"""\
+From: sender@example.com
+Return-Path: <SRS0=abc=DT=example.com=sender@relay.com>
+ARC-Authentication-Results: i=1; mx.example.com; spf=pass smtp.mailfrom=example.com
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        assert valid is True
+        assert "arc" in reason.lower()
+    
+    def test_arc_spf_no_pass_falls_through(self):
+        """Test ARC-SPF with no SPF pass falls through to other checks."""
+        raw_email = b"""\
+From: sender@example.com
+ARC-Authentication-Results: i=1; mx.example.com; spf=fail smtp.mailfrom=example.com
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        # No SPF pass in ARC, should fall through to other checks
+        # With no SRS and no other SPF info, should pass (lenient)
+        assert valid is True
+    
+    def test_srs_address_no_arc_passes(self):
+        """Test SRS-rewritten Return-Path passes without ARC headers."""
+        raw_email = b"""\
+From: sender@example.com
+Return-Path: <SRS0=abc=DT=example.com=sender@relay.com>
+Authentication-Results: mail.example.com; dkim=pass
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        # SRS detected, should pass (trusting DKIM)
+        assert valid is True
+        assert "srs" in reason.lower()
+    
+    def test_srs_address_version_1(self):
+        """Test SRS1 address is also detected."""
+        raw_email = b"""\
+From: sender@example.com
+Return-Path: <SRS1=abc=DT=example.com=sender@relay.com>
+Authentication-Results: mail.example.com; dkim=pass
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        assert valid is True
+        assert "srs" in reason.lower()
+    
+    def test_no_srs_no_arc_no_spf_passes(self):
+        """Test email without SRS, ARC, or SPF info passes (lenient)."""
+        raw_email = b"""\
+From: sender@example.com
+Return-Path: <sender@example.com>
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        # No SPF info, no SRS, no ARC - lenient default pass
+        assert valid is True
+    
+    def test_arc_with_srf_prefers_arc(self):
+        """Test that ARC-SPF pass is used when both ARC and SRS are present."""
+        raw_email = b"""\
+From: hiring@veedma.com
+Return-Path: <SRS0=07c6=DT=veedma.com=hiring@mysecuremail.co>
+ARC-Authentication-Results: i=2; Received-SPF: pass (mail.mysecuremail.co: domain of hiring@veedma.com designates 209.85.218.49 as permitted sender)
+
+Test."""
+        email = create_email(raw_email)
+        valid, reason = validate_spf(email)
+        
+        assert valid is True
+        assert "arc" in reason.lower()
+        assert "srs" not in reason.lower()  # ARC takes precedence
+
+
+class TestSRSAddressDetection:
+    """Test SRS address detection function."""
+    
+    def test_srs0_address(self):
+        """Test standard SRS0 address is detected."""
+        assert is_srs_address("SRS0=07c6=DT=veedma.com=hiring@mysecuremail.co")
+    
+    def test_srs0_address_wrapped(self):
+        """Test SRS0 address with angle brackets."""
+        assert is_srs_address("<SRS0=07c6=DT=veedma.com=hiring@mysecuremail.co>")
+    
+    def test_srs1_address(self):
+        """Test SRS1 address is detected."""
+        assert is_srs_address("SRS1=abc=DT=example.com=user@relay.com")
+    
+    def test_normal_address(self):
+        """Test normal email address is not detected as SRS."""
+        assert not is_srs_address("user@example.com")
+    
+    def test_normal_address_with_angle_brackets(self):
+        """Test normal address with angle brackets is not SRS."""
+        assert not is_srs_address("<user@example.com>")
+    
+    def test_empty_string(self):
+        """Test empty string is not SRS."""
+        assert not is_srs_address("")
+    
+    def test_none_string(self):
+        """Test None is not SRS."""
+        assert not is_srs_address(None)
+
+
+class TestCheckArcSPF:
+    """Test ARC-SPF checking function."""
+    
+    def test_received_spf_pass(self):
+        """Test Received-SPF: pass pattern."""
+        arc_headers = ["i=2; Received-SPF: pass (mail.example.com: domain of sender@example.com designates 1.2.3.4 as permitted sender)"]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is True
+        assert "arc" in reason.lower()
+    
+    def test_received_spf_pass_no_space(self):
+        """Test Received-SPF:pass pattern (no space after colon)."""
+        arc_headers = ["i=1; Received-SPF:pass smtp.mailfrom=example.com"]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is True
+    
+    def test_spf_eq_pass(self):
+        """Test spf=pass pattern."""
+        arc_headers = ["i=1; mx.example.com; spf=pass smtp.mailfrom=example.com"]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is True
+    
+    def test_spf_eq_fail(self):
+        """Test spf=fail is not a pass."""
+        arc_headers = ["i=1; mx.example.com; spf=fail smtp.mailfrom=example.com"]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is False
+    
+    def test_multiple_arc_headers_first_pass(self):
+        """Test multiple ARC headers with SPF pass in first."""
+        arc_headers = [
+            "i=1; mx.google.com; spf=pass smtp.mailfrom=example.com",
+            "i=2; Received-SPF: fail"
+        ]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is True
+        assert "header 1" in reason
+    
+    def test_multiple_arc_headers_second_pass(self):
+        """Test multiple ARC headers with SPF pass in second."""
+        arc_headers = [
+            "i=1; mx.google.com; arc=none",
+            "i=2; Received-SPF: pass (relay: authorized)"
+        ]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is True
+        assert "header 2" in reason
+    
+    def test_no_arc_headers(self):
+        """Test empty arc_headers list."""
+        valid, reason = check_arc_spf([])
+        
+        assert valid is False
+        assert "no arc" in reason.lower()
+    
+    def test_none_arc_headers(self):
+        """Test None arc_headers."""
+        valid, reason = check_arc_spf(None)
+        
+        assert valid is False
+    
+    def test_no_spf_in_arc(self):
+        """Test ARC headers without any SPF result."""
+        arc_headers = ["i=1; mx.example.com; dkim=pass"]
+        valid, reason = check_arc_spf(arc_headers)
+        
+        assert valid is False
+        assert "no spf pass" in reason.lower()
 
 
 class TestValidateHeadersMatchFrom:
