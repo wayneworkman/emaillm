@@ -382,7 +382,7 @@ def main():
             sys.exit(1)
     
     vllm_temp = get_input("vLLM temperature (higher = more creative, lower = more deterministic)", default="0.7")
-    vllm_max_tokens = get_int_input("vLLM max tokens (higher = more context for large emails)", default=4096, min_val=100)
+    vllm_max_tokens = get_int_input("vLLM max tokens (higher = more context for large emails)", default=80000, min_val=100)
     vllm_enable_thinking = get_bool_input("Enable vLLM thinking mode (slower but may improve accuracy)?", default=False)
     
     # vLLM API Key (optional)

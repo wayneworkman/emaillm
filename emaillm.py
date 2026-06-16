@@ -404,7 +404,7 @@ class SpamFilterConfig:
     keepassxc_password_file: str
     vllm_base_url: str
     vllm_temperature: float = 0.1
-    vllm_max_tokens: int = 4096
+    vllm_max_tokens: int = 80000
     vllm_enable_thinking: bool = False  # Disable thinking by default for faster responses
     vllm_api_key: Optional[str] = None  # API key for vLLM authentication (optional)
     processing_timeout: int = 30
@@ -529,7 +529,7 @@ def load_config(config_path: str) -> SpamFilterConfig:
         keepassxc_password_file=config_data['keepassxc']['password_file'],
         vllm_base_url=vllm_config.get('base_url', 'http://localhost:8000/v1'),
         vllm_temperature=vllm_config.get('temperature', 0.1),
-        vllm_max_tokens=vllm_config.get('max_tokens', 4096),
+        vllm_max_tokens=vllm_config.get('max_tokens', 80000),
         vllm_enable_thinking=vllm_config.get('enable_thinking', False),
         vllm_api_key=vllm_config.get('api_key'),  # Can be None, null, or string
         processing_timeout=spam_config.get('processing_timeout_seconds', 30),

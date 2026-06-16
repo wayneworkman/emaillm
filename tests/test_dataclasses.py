@@ -173,7 +173,7 @@ class TestSpamFilterConfig:
         )
         
         assert config.vllm_temperature == 0.1  # Default
-        assert config.vllm_max_tokens == 4096  # Default
+        assert config.vllm_max_tokens == 80000  # Default
         assert config.vllm_enable_thinking is False  # Default
         assert config.processing_timeout == 30  # Default
         assert config.max_emails_per_run == 30  # Default
@@ -377,6 +377,6 @@ class TestLoadConfig:
         config = load_config(str(config_path))
         
         assert config.vllm_temperature == 0.1  # Default
-        assert config.vllm_max_tokens == 4096  # Default (from config loading)
+        assert config.vllm_max_tokens == 80000  # Default (from config loading)
         assert config.processing_timeout == 30  # Default
         assert config.max_emails_per_run == 30  # Default
