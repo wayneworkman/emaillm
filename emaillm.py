@@ -1304,7 +1304,7 @@ def extract_sent_data_from_sent_folder(imap: imaplib.IMAP4_SSL, max_sent_emails:
         
         if not sent_folder:
             logger.debug("Sent folder not available, skipping recipient extraction")
-            return recipients
+            return recipients, message_ids
         
         # Search for recent sent emails
         status, data = imap.search(None, 'ALL')
@@ -1314,10 +1314,10 @@ def extract_sent_data_from_sent_folder(imap: imaplib.IMAP4_SSL, max_sent_emails:
             # Re-select Inbox before returning
             try:
                 imap.select('Inbox')
-            except imaplib.IMAPABort:
+            except imaplib.IMAP4.abort:
                 pass
-            return recipients
-        
+            return recipients, message_ids
+
         mail_ids = data[0].decode('utf-8').split()
         logger.debug(f"Found {len(mail_ids)} emails in Sent folder")
         # Take most recent sent emails

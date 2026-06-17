@@ -1,6 +1,5 @@
 """Tests for the uninstaller script."""
 
-import pytest
 import subprocess
 import sys
 from pathlib import Path
@@ -51,7 +50,6 @@ class TestUninstallerFunctions:
     @patch("uninstall.subprocess.run")
     def test_cron_removal_calls_crontab(self, mock_run):
         """Test that cron removal calls crontab."""
-        from uninstall import remove_cron_job
         
         # Mock crontab -l returning empty
         mock_run.return_value = MagicMock(returncode=1)  # No crontab

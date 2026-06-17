@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 from emaillm import (
     FolderConfig,
-    EmailClassification,
     load_config,
 )
 

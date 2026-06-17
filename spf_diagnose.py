@@ -311,8 +311,8 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
         if message_id:
             search_desc += f", Message-ID: {message_id}"
         print(f"\n[NOT FOUND] Could not find email matching: {search_desc}")
-        print(f"Searched folders: Inbox, Spam, INBOX/Spam")
-        print(f"Make sure the sender address and subject (partial) are correct.\n")
+        print("Searched folders: Inbox, Spam, INBOX/Spam")
+        print("Make sure the sender address and subject (partial) are correct.\n")
         return
 
     # ========================================
@@ -331,13 +331,12 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     msg_id = found_email.get('Message-ID', '')
     return_path = found_email.get('Return-Path', '')
     sender_header = found_email.get('Sender', '')
-    envelope_from = found_email.get('Envelope-From', '')
 
     _, from_addr = parseaddr(from_raw)
     from_addr = from_addr.strip()
     from_domain = extract_domain(from_addr)
 
-    print(f"\n--- Basic Information ---")
+    print("\n--- Basic Information ---")
     print(f"  From:          {from_raw}")
     print(f"  From address:  {from_addr}")
     print(f"  From domain:   {from_domain}")
@@ -350,7 +349,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
         print(f"  Sender header: {sender_header}")
 
     # All Received headers (they can appear multiple times)
-    print(f"\n--- Received Headers (all instances) ---")
+    print("\n--- Received Headers (all instances) ---")
     received_headers = found_email.get_all('Received', [])
     if not received_headers:
         print("  (none)")
@@ -358,44 +357,41 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
         print(f"  Received[{i}]: {r}")
 
     # Authentication headers
-    print(f"\n--- Authentication Headers ---")
+    print("\n--- Authentication Headers ---")
     auth_results = found_email.get('Authentication-Results', '')
     received_spf = found_email.get('Received-SPF', '')
     dkim_signature = found_email.get('DKIM-Signature', '')
-    dkim_headers = found_email.get_all('DKIM-Signature', [])
     arc_headers = found_email.get_all('ARC-Authentication-Results', [])
-    domainkeys = found_email.get('DomainKey-Signature', '')
-    spf_header = found_email.get('X-Spam', '')
 
-    print(f"  Authentication-Results:")
+    print("  Authentication-Results:")
     if auth_results:
         for line in auth_results.split('\n'):
             print(f"    {line.strip()}")
     else:
-        print(f"    (none)")
+        print("    (none)")
 
-    print(f"  Received-SPF:")
+    print("  Received-SPF:")
     if received_spf:
         print(f"    {received_spf}")
     else:
-        print(f"    (none)")
+        print("    (none)")
 
-    print(f"  DKIM-Signature:")
+    print("  DKIM-Signature:")
     if dkim_signature:
         for line in dkim_signature.split('\n'):
             print(f"    {line.strip()}")
     else:
-        print(f"    (none)")
+        print("    (none)")
 
     if arc_headers:
-        print(f"  ARC-Authentication-Results:")
+        print("  ARC-Authentication-Results:")
         for arc in arc_headers:
             print(f"    {arc}")
 
     # ========================================
     # SPF ANALYSIS
     # ========================================
-    print(f"\n--- SPF DNS RECORD ---")
+    print("\n--- SPF DNS RECORD ---")
     print(f"  Looking up TXT records for: {from_domain}")
     spf_record = lookup_spf_record(from_domain)
     print(f"\n  SPF record for '{from_domain}':")
@@ -404,7 +400,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
             for r in spf_record:
                 print(f"    {r}")
         else:
-            print(f"    (no TXT records found)")
+            print("    (no TXT records found)")
     else:
         print(f"    {spf_record}")
 
@@ -423,7 +419,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     # ========================================
     # MANUAL SPF CHECK
     # ========================================
-    print(f"\n--- MANUAL SPF CHECK ---")
+    print("\n--- MANUAL SPF CHECK ---")
 
     # Determine the sender IP from Received headers
     sender_ip = ''
@@ -445,7 +441,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     if sender_ip and envelope_sender:
         try:
             result = spf.check2(sender_ip, envelope_sender, from_domain)
-            print(f"\n  pyspf.check2 results:")
+            print("\n  pyspf.check2 results:")
             print(f"    SPF result:  {result[0]}")
             print(f"    Explanaton:  {result[1]}")
             print(f"    Helo:        {result[2]}")
@@ -468,7 +464,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     # ========================================
     # AUTH RESULTS PARSING
     # ========================================
-    print(f"\n--- AUTHENTICATION RESULTS ANALYSIS ---")
+    print("\n--- AUTHENTICATION RESULTS ANALYSIS ---")
     if not auth_results:
         print("  No Authentication-Results header found on this email.")
         print("  Your receiving mail server may not perform auth checks,")
@@ -517,7 +513,7 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     # ========================================
     # WHY IS SPF FAILING?
     # ========================================
-    print(f"\n--- WHY SPF IS FAILING ---")
+    print("\n--- WHY SPF IS FAILING ---")
 
     if isinstance(spf_record, list) or spf_record in ['No TXT records found', 'NXDOMAIN - domain does not exist']:
         print("  The sending domain has NO SPF record (no TXT record with v=spf1).")
@@ -529,26 +525,26 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
     elif isinstance(spf_record, str) and spf_record.startswith('v=spf1'):
         print(f"  The domain HAS an SPF record: {spf_record}")
         print(f"  But the sending IP ({sender_ip}) is NOT listed as authorized in that record.")
-        print(f"  This is a genuine SPF failure - the sending server is not authorized by the domain owner.")
+        print("  This is a genuine SPF failure - the sending server is not authorized by the domain owner.")
         print()
-        print(f"  Common reasons:")
-        print(f"    1. The domain owner hasn't added the sending server's IP to their SPF record")
-        print(f"    2. The email is genuinely spoofed (someone pretending to be this domain)")
-        print(f"    3. The domain uses a third-party mail service that isn't listed in SPF")
-        print(f"    4. The Return-Path domain differs from the From domain (mailing list issue)")
+        print("  Common reasons:")
+        print("    1. The domain owner hasn't added the sending server's IP to their SPF record")
+        print("    2. The email is genuinely spoofed (someone pretending to be this domain)")
+        print("    3. The domain uses a third-party mail service that isn't listed in SPF")
+        print("    4. The Return-Path domain differs from the From domain (mailing list issue)")
 
         # Check for domain mismatch
         if return_path and envelope_sender:
             envelope_domain = extract_domain(envelope_sender)
             if envelope_domain != from_domain:
                 print(f"\n  NOTE: Return-Path domain ({envelope_domain}) differs from From domain ({from_domain})")
-                print(f"  SPF checks the Return-Path domain, not the From domain.")
+                print("  SPF checks the Return-Path domain, not the From domain.")
                 print(f"  The SPF record for '{envelope_domain}' does not authorize IP {sender_ip}.")
 
     # ========================================
     # SUMMARY
     # ========================================
-    print(f"\n--- SUMMARY ---")
+    print("\n--- SUMMARY ---")
     spf_from_auth = re.search(r'spf=([a-z]+)', auth_results)
     if spf_from_auth:
         print(f"  Your mail server reports SPF as: {spf_from_auth.group(1)}")
@@ -557,8 +553,8 @@ def diagnose_email(config: dict, inbox_cfg: dict, sender: str,
         dkim_val = dkim_from_auth.group(1)
         print(f"  Your mail server reports DKIM as: {dkim_val}")
         if dkim_val == 'pass':
-            print(f"  DKIM is valid, so the email content hasn't been tampered with")
-            print(f"  and the domain has cryptographically signed this email.")
+            print("  DKIM is valid, so the email content hasn't been tampered with")
+            print("  and the domain has cryptographically signed this email.")
 
     print()
     print_separator()

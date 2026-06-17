@@ -1,6 +1,5 @@
 """Tests for email authentication validation (DKIM, SPF, headers)."""
 
-import pytest
 from email import policy
 from email import message_from_bytes
 from emaillm import (

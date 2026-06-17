@@ -1,6 +1,5 @@
 """Tests for domain matching and allowlist functionality."""
 
-import pytest
 from emaillm import domain_matches
 
 

@@ -1,6 +1,5 @@
 """Tests for email parsing and message handling."""
 
-import pytest
 from email import policy
 from email import message_from_bytes
 from emaillm import EmailMessage

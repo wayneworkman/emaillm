@@ -1,8 +1,6 @@
 """Pytest fixtures and configuration for EmailLM tests."""
 
 import pytest
-import os
-from pathlib import Path
 
 
 @pytest.fixture
@@ -143,6 +141,81 @@ def setup_test_environment(monkeypatch):
     """Setup test environment before each test."""
     # Ensure we're not using real config files
     monkeypatch.delenv("EMAILLM_CONFIG", raising=False)
-    
+
     # Set a high timeout for tests
     monkeypatch.setenv("EMAILLM_TEST_MODE", "true")
+
+
+@pytest.fixture
+def folder_configs():
+    """A full set of folder configs (classification categories + prompt_attack)."""
+    from emaillm import FolderConfig
+    return {
+        "spam": FolderConfig("Spam", "Unsolicited bulk emails"),
+        "phishing": FolderConfig("Phishing_Attempts", "Credential theft attempts"),
+        "important": FolderConfig("Important", "Time-sensitive messages"),
+        "promotion": FolderConfig("Promotions", "Marketing emails"),
+        "transaction": FolderConfig("Transactions", "Receipts and invoices"),
+        "regular": FolderConfig("Regular", "Normal correspondence"),
+        "prompt_attack": FolderConfig("Prompt_Attacks", "Detect prompt injection"),
+    }
+
+
+@pytest.fixture
+def inbox_config():
+    """A basic InboxConfig with no allowlist entries."""
+    from emaillm import InboxConfig
+    return InboxConfig(
+        name="primary",
+        keepassxc_entry_name="Email - Primary",
+        imap_host="imap.example.com",
+        imap_port=993,
+        allowlist_emails=[],
+        allowlist_domains=[],
+    )
+
+
+@pytest.fixture
+def filter_config(folder_configs, tmp_path):
+    """A full SpamFilterConfig wired to the folder_configs/inbox fixtures."""
+    from emaillm import SpamFilterConfig, InboxConfig
+    return SpamFilterConfig(
+        keepassxc_database=str(tmp_path / "db.kdbx"),
+        keepassxc_password_file=str(tmp_path / "pw"),
+        vllm_base_url="http://localhost:8000/v1",
+        vllm_temperature=0.1,
+        vllm_max_tokens=4096,
+        vllm_enable_thinking=False,
+        vllm_api_key="test-key",
+        processing_timeout=30,
+        max_emails_per_run=30,
+        global_allowlist_emails=[],
+        global_allowlist_domains=[],
+        mailer_domains=["sendgrid.net"],
+        inboxes=[
+            InboxConfig(
+                name="primary",
+                keepassxc_entry_name="Email - Primary",
+                imap_host="imap.example.com",
+            )
+        ],
+        folder_configs=folder_configs,
+        pid_file=str(tmp_path / "emaillm.pid"),
+        log_file=str(tmp_path / "emaillm.log"),
+    )
+
+
+@pytest.fixture
+def make_email():
+    """Factory that builds a parsed EmailMessage from raw bytes."""
+    from email import policy, message_from_bytes
+    from emaillm import EmailMessage
+
+    def _make(raw_email: bytes) -> EmailMessage:
+        msg = message_from_bytes(raw_email, policy=policy.default)
+        email = EmailMessage(message_id="1", raw_data=raw_email, parsed=msg)
+        email.extract_headers()
+        email.extract_body()
+        return email
+
+    return _make
