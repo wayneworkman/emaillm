@@ -176,7 +176,8 @@ class TestSpamFilterConfig:
         assert config.vllm_max_tokens == 80000  # Default
         assert config.vllm_enable_thinking is False  # Default
         assert config.processing_timeout == 30  # Default
-        assert config.max_emails_per_run == 30  # Default
+        assert config.max_emails_per_run == 250  # Default
+        assert config.security_checks_enabled is False  # Default: off (lenient)
 
 
 class TestLoadConfig:
@@ -379,4 +380,38 @@ class TestLoadConfig:
         assert config.vllm_temperature == 0.1  # Default
         assert config.vllm_max_tokens == 80000  # Default (from config loading)
         assert config.processing_timeout == 30  # Default
-        assert config.max_emails_per_run == 30  # Default
+        assert config.max_emails_per_run == 250  # Default
+        assert config.security_checks_enabled is False  # Default when key absent
+
+    def test_load_config_security_checks_enabled(self, tmp_path, monkeypatch):
+        """security_checks_enabled: true in the spam section is loaded as True."""
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+        config_data = {
+            "keepassxc": {
+                "database_path": str(tmp_path / "database.kdbx"),
+                "password_file": str(tmp_path / "password")
+            },
+            "vllm": {"base_url": "http://localhost:8000/v1"},
+            "spam": {"security_checks_enabled": True},
+            "mailers": {"domains": []},
+            "folders": {
+                "spam": {"folder_name": "Spam", "description": "Spam"},
+                "phishing": {"folder_name": "Phishing", "description": "Phishing"},
+                "important": {"folder_name": "Important", "description": "Important"},
+                "promotion": {"folder_name": "Promotions", "description": "Promotions"},
+                "transaction": {"folder_name": "Transactions", "description": "Transactions"},
+                "regular": {"folder_name": "Regular", "description": "Regular"}
+            },
+            "global_allowlist": {"email_addresses": [], "domains": []},
+            "inboxes": [],
+            "runtime": {}
+        }
+
+        config_path = tmp_path / "config.json"
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        config = load_config(str(config_path))
+
+        assert config.security_checks_enabled is True

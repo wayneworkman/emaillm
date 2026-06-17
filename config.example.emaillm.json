@@ -12,7 +12,8 @@
     },
     "spam": {
         "processing_timeout_seconds": 30,
-        "max_emails_per_run": 30
+        "max_emails_per_run": 250,
+        "security_checks_enabled": false
     },
     "mailers": {
         "domains": [

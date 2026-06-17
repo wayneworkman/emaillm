@@ -454,7 +454,12 @@ def main():
     print()
     
     processing_timeout = get_int_input("Processing timeout (seconds)", default=30, min_val=10)
-    
+
+    print_info("Security checks (DKIM/SPF/header) auto-move failing mail to Spam.")
+    print_info("Many legitimate senders have misconfigured domains, so this is OFF by default.")
+    print_info("The LLM still classifies spam regardless of this setting.")
+    security_checks_enabled = get_bool_input("Enable security checks (auto-spam on DKIM/SPF/header failure)?", default=False)
+
     # Global allowlist
     print_header("Global Allowlist (Optional)")
     print_info("These senders will skip spam classification")
@@ -586,7 +591,8 @@ def main():
             "api_key": vllm_api_key
         },
         "spam": {
-            "processing_timeout_seconds": processing_timeout
+            "processing_timeout_seconds": processing_timeout,
+            "security_checks_enabled": security_checks_enabled
         },
         "folders": folder_configs,
         "global_allowlist": {

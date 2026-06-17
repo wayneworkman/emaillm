@@ -57,6 +57,7 @@ class TestAllowlisting:
         cls, _ = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"),
             [], ["*.example.com"], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "regular"
 
@@ -69,10 +70,13 @@ class TestAllowlisting:
 
 
 class TestAuthChecks:
+    """Behavior when security checks are explicitly enabled."""
+
     def test_all_pass_returns_regular(self, email, folder_configs, monkeypatch):
         _patch_checks(monkeypatch)
         cls, reason = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "regular"
         assert "passed" in reason.lower()
@@ -81,6 +85,7 @@ class TestAuthChecks:
         _patch_checks(monkeypatch, dkim=False)
         cls, reason = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "spoofed"
         assert cls.target_folder == "Spam"
@@ -90,6 +95,7 @@ class TestAuthChecks:
         _patch_checks(monkeypatch, spf=(False, "SPF failed"))
         cls, _ = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "spoofed"
 
@@ -98,6 +104,7 @@ class TestAuthChecks:
         _patch_checks(monkeypatch, spf=(False, "SPF softfail - lenient"))
         cls, _ = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "regular"
 
@@ -105,6 +112,7 @@ class TestAuthChecks:
         _patch_checks(monkeypatch, headers=False)
         cls, _ = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=True,
         )
         assert cls.category == "spoofed"
 
@@ -114,6 +122,64 @@ class TestAuthChecks:
         cls, _ = validate_email_authenticity(
             email, InboxConfig("i", "e", "h"),
             ["sender@example.com"], [], folder_configs,
+            security_checks_enabled=True,
         )
         # Allowlist check returns before validation runs at all
         assert cls.category == "allowlisted"
+
+
+class TestSecurityChecksDisabled:
+    """Behavior with security checks off (the default)."""
+
+    def test_disabled_by_default_skips_checks(self, email, folder_configs, monkeypatch):
+        """Without the flag, a DKIM failure must NOT mark the email spoofed."""
+        _patch_checks(monkeypatch, dkim=False)
+        cls, reason = validate_email_authenticity(
+            email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+        )
+        assert cls.category == "regular"
+        assert cls.target_folder == "Regular"
+        assert "disabled" in reason.lower()
+
+    def test_explicit_disabled_skips_checks(self, email, folder_configs, monkeypatch):
+        """security_checks_enabled=False skips validation even on hard SPF fail."""
+        _patch_checks(monkeypatch, dkim=False, spf=(False, "SPF failed"), headers=False)
+        cls, reason = validate_email_authenticity(
+            email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+            security_checks_enabled=False,
+        )
+        assert cls.category == "regular"
+        assert "disabled" in reason.lower()
+
+    def test_disabled_does_not_call_validators(self, email, folder_configs, monkeypatch):
+        """When disabled, the DKIM/SPF/header validators must not be invoked."""
+        called = {"dkim": False, "spf": False, "headers": False}
+
+        def boom_dkim(e):
+            called["dkim"] = True
+            return (False, "should not run")
+
+        monkeypatch.setattr(emaillm, "validate_dkim", boom_dkim)
+        monkeypatch.setattr(
+            emaillm, "validate_spf",
+            lambda e: (called.__setitem__("spf", True), (False, "x"))[1],
+        )
+        monkeypatch.setattr(
+            emaillm, "validate_headers_match_from",
+            lambda e, mailer_domains=None: (called.__setitem__("headers", True), (False, "x"))[1],
+        )
+
+        cls, _ = validate_email_authenticity(
+            email, InboxConfig("i", "e", "h"), [], [], folder_configs,
+        )
+        assert cls.category == "regular"
+        assert called == {"dkim": False, "spf": False, "headers": False}
+
+    def test_allowlist_still_applies_when_disabled(self, email, folder_configs):
+        """Allowlisting short-circuits before the disabled-checks bypass."""
+        cls, reason = validate_email_authenticity(
+            email, InboxConfig("i", "e", "h"),
+            ["sender@example.com"], [], folder_configs,
+        )
+        assert cls.category == "allowlisted"
+        assert "allowlisted" in reason.lower()

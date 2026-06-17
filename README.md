@@ -26,7 +26,7 @@ A Python script that retrieves emails via encrypted IMAP and classifies them usi
 - **Newest First Processing**: Processes most recent emails first to avoid message ID shifting
 - **Conversation Thread Detection**: Scans Sent folder to identify replies and ongoing conversations
 - **Dynamic vLLM Model**: Automatically detects the current model served by vLLM
-- **Configurable Email Limit**: Process only the latest N emails per run (default: 30)
+- **Configurable Email Limit**: Process only the latest N emails per run (default: 250)
 - **Cron-Friendly**: Designed to run as a scheduled job with PID file protection
 - **Flexible Configuration**: Config file location via environment variable (`EMAILLM_CONFIG`)
 - **Dual Logging**: Console output (stdout) plus file logging with configurable paths
@@ -123,7 +123,8 @@ Copy `config.example.emaillm.json` to `~/.emaillm.json` and customize:
     },
     "spam": {
         "processing_timeout_seconds": 30,
-        "max_emails_per_run": 30
+        "max_emails_per_run": 250,
+        "security_checks_enabled": false
     },
     "folders": {
         "spam": {
@@ -195,7 +196,8 @@ Copy `config.example.emaillm.json` to `~/.emaillm.json` and customize:
 
 **EmailLM Settings:**
 - `processing_timeout_seconds`: IMAP connection timeout (default: 30)
-- `max_emails_per_run`: Maximum emails to process per run (default: 30)
+- `max_emails_per_run`: Maximum emails to process per run (default: 250)
+- `security_checks_enabled`: When `true`, DKIM/SPF/header failures automatically move mail to the Spam folder. When `false` (**default**), these checks are skipped and every non-allowlisted email is handed to the LLM for classification, which can still route genuine spam to the Spam folder. This option defaults to **off** because misconfigured-but-legitimate senders (a large fraction of real-world mail) otherwise generate disruptive false positives. Omitting the key entirely is equivalent to `false`.
 
 **Runtime Settings:**
 - `pid_file`: Path to PID file for preventing duplicate instances (default: `~/.local/state/emaillm.pid`)
@@ -272,11 +274,12 @@ EmailLM handles its own file logging (configured in the `runtime.log_file` setti
 7. **Sent Folder Scan**: Extracts recipient email addresses and Message-IDs from Sent folder
 8. **Email Processing** (newest first):
    - **Own Email Detection**: Moves emails from your own address to Important
-   - **Authenticity Validation**:
+   - **Authenticity Validation** (only when `security_checks_enabled` is `true`; **disabled by default**):
      - DKIM signature verification
      - SPF record validation (lenient: softfail/neutral = pass)
      - Header consistency checks
      - **Failures = automatic spam** (unless allowlisted)
+     - When disabled (the default), this step is skipped and the email proceeds straight to LLM classification
    - **Allow-list Check**: Trusted senders are moved to Regular folder
    - **Previously Contacted Check**: Emails from recipients in your Sent folder are marked as Important
    - **Conversation Thread Detection**: Checks In-Reply-To and References headers against Sent folder Message-IDs
@@ -347,6 +350,8 @@ When running with `-v` flag, the script outputs reasoning to stdout (not logged 
 This helps you understand why emails are classified or flagged without storing sensitive content in log files.
 
 ## Authentication Validation Details
+
+**These checks only run when `security_checks_enabled` is `true` in the `spam` config section. They are disabled by default** — see the `security_checks_enabled` option above. When disabled, none of the DKIM/SPF/header logic below can move mail to spam; only the LLM classifier can.
 
 The script uses **lenient defaults** to avoid false positives:
 

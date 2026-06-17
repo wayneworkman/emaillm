@@ -408,7 +408,11 @@ class SpamFilterConfig:
     vllm_enable_thinking: bool = False  # Disable thinking by default for faster responses
     vllm_api_key: Optional[str] = None  # API key for vLLM authentication (optional)
     processing_timeout: int = 30
-    max_emails_per_run: int = 30  # Limit emails processed per run
+    max_emails_per_run: int = 250  # Limit emails processed per run
+    # When False (default), DKIM/SPF/header failures do NOT auto-move mail to
+    # spam. This avoids false positives from senders whose domains are
+    # misconfigured. The LLM classifier downstream can still route mail to spam.
+    security_checks_enabled: bool = False
     global_allowlist_emails: list = field(default_factory=list)
     global_allowlist_domains: list = field(default_factory=list)
     mailer_domains: list = field(default_factory=list)  # Known mailer domains for header validation
@@ -533,7 +537,8 @@ def load_config(config_path: str) -> SpamFilterConfig:
         vllm_enable_thinking=vllm_config.get('enable_thinking', False),
         vllm_api_key=vllm_config.get('api_key'),  # Can be None, null, or string
         processing_timeout=spam_config.get('processing_timeout_seconds', 30),
-        max_emails_per_run=spam_config.get('max_emails_per_run', 30),
+        max_emails_per_run=spam_config.get('max_emails_per_run', 250),
+        security_checks_enabled=spam_config.get('security_checks_enabled', False),
         global_allowlist_emails=global_allowlist.get('email_addresses', []),
         global_allowlist_domains=global_allowlist.get('domains', []),
         mailer_domains=mailer_domains,
@@ -1181,25 +1186,38 @@ def domain_matches(email_domain: str, allowed_domain: str) -> bool:
     return False
 
 
-def validate_email_authenticity(email: EmailMessage, inbox_config: InboxConfig, 
-                                 global_allowlist_emails: list, global_allowlist_domains: list, 
-                                 folder_configs: dict, mailer_domains: list = None) -> tuple[EmailClassification, str]:
+def validate_email_authenticity(email: EmailMessage, inbox_config: InboxConfig,
+                                 global_allowlist_emails: list, global_allowlist_domains: list,
+                                 folder_configs: dict, mailer_domains: list = None,
+                                 security_checks_enabled: bool = False) -> tuple[EmailClassification, str]:
     """
     Validate email authenticity using DKIM, SPF, and header checks.
     Returns (classification, reason).
+
+    When ``security_checks_enabled`` is False (the default), DKIM/SPF/header
+    failures are NOT used to auto-classify mail as spoofed. This avoids the
+    disruption of legitimate mail landing in spam because the sender's domain
+    is misconfigured. Allowlisting still applies, and the LLM classifier
+    downstream can still route genuinely spammy mail to the spam folder.
     """
     # Check if email is allowlisted first
     combined_emails = global_allowlist_emails + inbox_config.allowlist_emails
     combined_domains = global_allowlist_domains + inbox_config.allowlist_domains
-    
+
     if email.from_address in combined_emails:
         return EmailClassification(category='allowlisted', folder_name=folder_configs['regular'].folder_name), f"Email address allowlisted: {email.from_address}"
-    
+
     # Check domain allowlist with wildcard support
     for allowed_domain in combined_domains:
         if domain_matches(email.from_domain, allowed_domain):
             return EmailClassification(category='allowlisted', folder_name=folder_configs['regular'].folder_name), f"Domain allowlisted: {email.from_domain} matches {allowed_domain}"
-    
+
+    # If security checks are disabled, skip DKIM/SPF/header validation entirely.
+    # The email proceeds to LLM classification, which can still mark it as spam.
+    if not security_checks_enabled:
+        logger.debug("Security checks disabled - skipping DKIM/SPF/header validation")
+        return EmailClassification(category='regular', folder_name=folder_configs['regular'].folder_name), "Security checks disabled - skipping DKIM/SPF/header validation"
+
     # For allowlisted emails, we still want to validate but won't mark as spam
     # For non-allowlisted, any failure = spoofed
     
@@ -1543,7 +1561,8 @@ def process_inbox(inbox_config: InboxConfig, filter_config: SpamFilterConfig,
                     filter_config.global_allowlist_emails,
                     filter_config.global_allowlist_domains,
                     filter_config.folder_configs,
-                    filter_config.mailer_domains
+                    filter_config.mailer_domains,
+                    filter_config.security_checks_enabled
                 )
                 
                 if classification.category == 'spoofed':
